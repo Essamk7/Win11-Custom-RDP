@@ -12,40 +12,135 @@ jobs:
     runs-on: windows-11-arm
 
     steps:
-      - name: Checkout
+      # 1. تنزيل ملفات المستودع
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: System Information
+      # 2. عرض معلومات نظام التشغيل
+      - name: Windows System Information
         shell: pwsh
         run: |
           Get-ComputerInfo |
             Select-Object WindowsProductName,
-              WindowsVersion,
-              OsArchitecture
+                          WindowsVersion,
+                          OsArchitecture
 
+          Write-Host "Workspace: $env:GITHUB_WORKSPACE"
+
+      # 3. إعداد Python
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      # 4. تثبيت المكتبات
       - name: Install Dependencies
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Test FastAPI
-        run: |
-          pytest -v
-
-      - name: Start API Test
+      # 5. التأكد من وجود ملفات المشروع
+      - name: Verify Project Files
         shell: pwsh
         run: |
-          $env:API_KEY = "temporary-test-key"
-          Start-Process python -ArgumentList `
-            "-m uvicorn app.main:app --host 127.0.0.1 --port 8000" `
+          if (-not (Test-Path "app/main.py")) {
+            throw "Missing app/main.py"
+          }
+
+          if (-not (Test-Path "tests/test_api.py")) {
+            throw "Missing tests/test_api.py"
+          }
+
+          if (-not (Test-Path "app/__init__.py")) {
+            throw "Missing app/__init__.py"
+          }
+
+          Write-Host "Project files verified."
+
+      # 6. اختبار استيراد FastAPI
+      - name: Verify FastAPI Import
+        shell: pwsh
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python -c "from app.main import app; print('FastAPI import successful')"
+
+      # 7. تشغيل الاختبارات
+      - name: Test FastAPI
+        shell: pwsh
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python -m pytest -v
+
+      # 8. تشغيل API محلياً واختباره
+      - name: Start and Test FastAPI
+        shell: pwsh
+        env:
+          API_KEY: temporary-test-key
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          $process = Start-Process `
+            -FilePath python `
+            -ArgumentList @(
+              "-m",
+              "uvicorn",
+              "app.main:app",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              "8000"
+            ) `
             -PassThru
 
-          Start-Sleep -Seconds 5
+          try {
+            $ready = $false
 
-          Invoke-RestMethod `
-            http://127.0.0.1:8000/health
+            for ($i = 0; $i -lt 15; $i++) {
+              Start-Sleep -Seconds 2
+
+              try {
+                $response = Invoke-RestMethod `
+                  -Uri "http://127.0.0.1:8000/health" `
+                  -TimeoutSec 3
+
+                if ($response.status -eq "healthy") {
+                  $ready = $true
+                  break
+                }
+              }
+              catch {
+                Write-Host "Waiting for API..."
+              }
+            }
+
+            if (-not $ready) {
+              throw "FastAPI failed to start"
+            }
+
+            Write-Host "FastAPI is running successfully."
+            $response | ConvertTo-Json
+          }
+          finally {
+            if ($process -and -not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force
+            }
+          }
+
+      # 9. ملخص التشغيل
+      - name: Workflow Summary
+        if: always()
+        shell: pwsh
+        run: |
+          "## Windows Environment Test" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY
+
+          "Runner: windows-11-arm" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          "Python: 3.12" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          "FastAPI and tests completed." |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
