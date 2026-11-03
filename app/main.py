@@ -1,6 +1,6 @@
-
 import os
 import platform
+import secrets
 import socket
 import time
 
@@ -8,29 +8,23 @@ from fastapi import FastAPI, Header, HTTPException
 
 app = FastAPI(
     title="Windows Environment Manager",
-    version="1.0.0",
-    docs_url=None
+    docs_url=None,
+    redoc_url=None
 )
 
-START_TIME = time.time()
-API_KEY = os.environ.get("API_KEY", "")
+_started = time.monotonic()
+_api_key = os.environ.get("API_KEY", "")
 
 
-def authorize(key):
-    import secrets
-
-    if not API_KEY or not key:
-        raise HTTPException(401, "Unauthorized")
-
-    if not secrets.compare_digest(key, API_KEY):
-        raise HTTPException(401, "Unauthorized")
+def require_key(value: str | None) -> None:
+    if not _api_key or not value or not secrets.compare_digest(value, _api_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 @app.get("/")
-def home():
+def root():
     return {
-        "name": "Windows Environment Manager",
-        "version": "1.0.0",
+        "service": "Windows Environment Manager",
         "status": "online"
     }
 
@@ -41,14 +35,13 @@ def health():
 
 
 @app.get("/system")
-def system(x_api_key: str = Header(None)):
-    authorize(x_api_key)
+def system(x_api_key: str | None = Header(default=None)):
+    require_key(x_api_key)
 
     return {
-        "os": platform.system(),
-        "version": platform.version(),
+        "os": platform.platform(),
         "architecture": platform.machine(),
         "hostname": socket.gethostname(),
-        "uptime_seconds": int(time.time() - START_TIME),
-        "python": platform.python_version()
+        "python": platform.python_version(),
+        "uptime_seconds": int(time.monotonic() - _started),
     }
