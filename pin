@@ -1,0 +1,15 @@
+Win11-Custom-RDP/
+│
+├── .github/
+│   └── workflows/
+│       └── windows.yml
+│
+├── app/
+│   ├── __init__.py
+│   └── main.py
+│
+├── tests/
+│   └── test_api.py
+│
+├── requirements.txt
+└── README.md
